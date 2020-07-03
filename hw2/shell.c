@@ -123,6 +123,28 @@ void init_shell() {
 	}
 }
 
+char *search_path(char *command) {
+	struct stat stat_buf;
+	size_t len = strlen(command);
+	char *pathname;
+	char *path_orig = getenv("PATH");
+	if (path_orig == NULL)
+		return NULL;
+	char *path = strcpy(malloc(strlen(path_orig) + 1), path_orig);
+	for (char *token = strtok(path, ":"); token != NULL; token = strtok(NULL, ":")) {
+		pathname = strcpy(malloc(strlen(token) + len + 2), token);
+		strcat(pathname, "/");
+		strcat(pathname, command);
+		if (stat(pathname, &stat_buf) != -1) {
+			free(path);
+			return pathname;
+		}
+		free(pathname);
+	}
+	free(path);
+	return NULL;
+}
+
 int main(unused int argc, unused char *argv[]) {
 	init_shell();
 
@@ -130,6 +152,7 @@ int main(unused int argc, unused char *argv[]) {
 	int line_num = 0, wstatus;
 	struct stat stat_buf;
 	pid_t pid;
+	char *pathname;
 
 	/* Please only print shell prompts when standard input is not a tty */
 	if (shell_is_interactive)
@@ -144,7 +167,8 @@ int main(unused int argc, unused char *argv[]) {
 
 		if (fundex >= 0) {
 			cmd_table[fundex].fun(tokens);
-		} else if (tokens_get_length(tokens) > 0 && stat(tokens_get_token(tokens, 0), &stat_buf) != -1) {
+		}
+		else if (tokens_get_length(tokens) > 0 && stat(tokens_get_token(tokens, 0), &stat_buf) != -1) {
 			if ((pid = fork())) {
 				waitpid(pid, &wstatus, 0);
 			}
@@ -156,8 +180,28 @@ int main(unused int argc, unused char *argv[]) {
 				args[tokens_get_length(tokens)] = NULL;
 				execv(tokens_get_token(tokens, 0), args);
 				perror(tokens_get_token(tokens, 0));
-				return -1;
+				return 1;
 			}
+		}
+		else if (tokens_get_length(tokens) > 0 && (pathname = search_path(tokens_get_token(tokens, 0)))) {
+			if ((pid = fork())) {
+				free(pathname);
+				waitpid(pid, &wstatus, 0);
+			}
+			else {
+				char **args = malloc(sizeof(char *) * (tokens_get_length(tokens) + 1));
+				for (size_t i = 0; i < tokens_get_length(tokens); i++) {
+					args[i] = tokens_get_token(tokens, i);
+				}
+				args[tokens_get_length(tokens)] = NULL;
+				execv(pathname, args);
+				perror(pathname);
+				return 1;
+			}
+		}
+		else if (tokens_get_length(tokens) == 0);
+		else {
+			fprintf(stderr, "%s: command not found\n", tokens_get_token(tokens, 0));
 		}
 
 		if (shell_is_interactive)
