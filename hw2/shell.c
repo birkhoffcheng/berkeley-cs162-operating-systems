@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -126,7 +127,9 @@ int main(unused int argc, unused char *argv[]) {
 	init_shell();
 
 	static char line[4096];
-	int line_num = 0;
+	int line_num = 0, wstatus;
+	struct stat stat_buf;
+	pid_t pid;
 
 	/* Please only print shell prompts when standard input is not a tty */
 	if (shell_is_interactive)
@@ -141,9 +144,20 @@ int main(unused int argc, unused char *argv[]) {
 
 		if (fundex >= 0) {
 			cmd_table[fundex].fun(tokens);
-		} else {
-			/* REPLACE this to run commands as programs. */
-			fprintf(stdout, "This shell doesn't know how to run programs.\n");
+		} else if (tokens_get_length(tokens) > 0 && stat(tokens_get_token(tokens, 0), &stat_buf) != -1) {
+			if ((pid = fork())) {
+				waitpid(pid, &wstatus, 0);
+			}
+			else {
+				char **args = malloc(sizeof(char *) * (tokens_get_length(tokens) + 1));
+				for (size_t i = 0; i < tokens_get_length(tokens); i++) {
+					args[i] = tokens_get_token(tokens, i);
+				}
+				args[tokens_get_length(tokens)] = NULL;
+				execv(tokens_get_token(tokens, 0), args);
+				perror(tokens_get_token(tokens, 0));
+				return -1;
+			}
 		}
 
 		if (shell_is_interactive)
