@@ -145,6 +145,48 @@ char *search_path(char *command) {
 	return NULL;
 }
 
+void execute(char *fullpath, struct tokens *tokens, size_t start_index, size_t end_index) {
+	if (start_index >= end_index)
+		return;
+	int fd;
+	size_t argc = end_index - start_index;
+	char **args = malloc(sizeof(char *) * (argc + 1));
+	for (size_t i = start_index; i < end_index; i++) {
+		if (tokens_get_token(tokens, i)[0] == '>' || tokens_get_token(tokens, i)[0] == '<') {
+			if (tokens_get_token(tokens, i)[0] == '>')
+				close(STDOUT_FILENO);
+			else if (tokens_get_token(tokens, i)[0] == '<')
+				close(STDIN_FILENO);
+			if (i >= end_index - 1) {
+				fprintf(stderr, "Please specify a filename\n");
+				exit(1);
+			}
+			if (!strcmp(tokens_get_token(tokens, i), ">"))
+				fd = open(tokens_get_token(tokens, i + 1), O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR | S_IRGRP);
+			else if (!strcmp(tokens_get_token(tokens, i), ">>"))
+				fd = open(tokens_get_token(tokens, i + 1), O_CREAT | O_APPEND | O_WRONLY, S_IRUSR | S_IWUSR | S_IRGRP);
+			else if (!strcmp(tokens_get_token(tokens, i), "<"))
+				fd = open(tokens_get_token(tokens, i + 1), O_RDONLY);
+			if (tokens_get_token(tokens, i)[0] == '>' && fd != STDOUT_FILENO)
+				dup2(fd, STDOUT_FILENO);
+			else if (tokens_get_token(tokens, i)[0] == '<' && fd != STDIN_FILENO) {
+				if (fd == -1) {
+					perror("open");
+					exit(1);
+				}
+				dup2(fd, STDIN_FILENO);
+			}
+			args[i - start_index] = NULL;
+			break;
+		}
+		args[i - start_index] = tokens_get_token(tokens, i);
+	}
+	args[argc] = NULL;
+	execv(fullpath, args);
+	perror(tokens_get_token(tokens, start_index));
+	exit(1);
+}
+
 int main(unused int argc, unused char *argv[]) {
 	init_shell();
 
@@ -168,38 +210,24 @@ int main(unused int argc, unused char *argv[]) {
 		if (fundex >= 0) {
 			cmd_table[fundex].fun(tokens);
 		}
-		else if (tokens_get_length(tokens) > 0 && stat(tokens_get_token(tokens, 0), &stat_buf) != -1) {
-			if ((pid = fork())) {
-				waitpid(pid, &wstatus, 0);
-			}
-			else {
-				char **args = malloc(sizeof(char *) * (tokens_get_length(tokens) + 1));
-				for (size_t i = 0; i < tokens_get_length(tokens); i++) {
-					args[i] = tokens_get_token(tokens, i);
-				}
-				args[tokens_get_length(tokens)] = NULL;
-				execv(tokens_get_token(tokens, 0), args);
-				perror(tokens_get_token(tokens, 0));
-				return 1;
-			}
-		}
-		else if (tokens_get_length(tokens) > 0 && (pathname = search_path(tokens_get_token(tokens, 0)))) {
+		else if (tokens_get_length(tokens) == 0);
+		else if ((pathname = search_path(tokens_get_token(tokens, 0)))) {
 			if ((pid = fork())) {
 				free(pathname);
 				waitpid(pid, &wstatus, 0);
 			}
 			else {
-				char **args = malloc(sizeof(char *) * (tokens_get_length(tokens) + 1));
-				for (size_t i = 0; i < tokens_get_length(tokens); i++) {
-					args[i] = tokens_get_token(tokens, i);
-				}
-				args[tokens_get_length(tokens)] = NULL;
-				execv(pathname, args);
-				perror(pathname);
-				return 1;
+				execute(pathname, tokens, 0, tokens_get_length(tokens));
 			}
 		}
-		else if (tokens_get_length(tokens) == 0);
+		else if (stat(tokens_get_token(tokens, 0), &stat_buf) != -1) {
+			if ((pid = fork())) {
+				waitpid(pid, &wstatus, 0);
+			}
+			else {
+				execute(tokens_get_token(tokens, 0), tokens, 0, tokens_get_length(tokens));
+			}
+		}
 		else {
 			fprintf(stderr, "%s: command not found\n", tokens_get_token(tokens, 0));
 		}
