@@ -29,6 +29,8 @@ struct termios shell_tmodes;
 /* Process group id for the shell */
 pid_t shell_pgid;
 
+pid_t pid;
+
 int cmd_exit(struct tokens *tokens);
 int cmd_help(struct tokens *tokens);
 int cmd_pwd(struct tokens *tokens);
@@ -187,13 +189,17 @@ void execute(char *fullpath, struct tokens *tokens, size_t start_index, size_t e
 	exit(1);
 }
 
+void kill_fg_process(int sig) {
+	signal(SIGINT, kill_fg_process);
+	kill(pid, sig);
+}
+
 int main(unused int argc, unused char *argv[]) {
 	init_shell();
 
 	static char line[4096];
 	int line_num = 0, wstatus;
 	struct stat stat_buf;
-	pid_t pid;
 	char *pathname;
 
 	/* Please only print shell prompts when standard input is not a tty */
@@ -214,6 +220,7 @@ int main(unused int argc, unused char *argv[]) {
 		else if ((pathname = search_path(tokens_get_token(tokens, 0)))) {
 			if ((pid = fork())) {
 				free(pathname);
+				signal(SIGINT, kill_fg_process);
 				waitpid(pid, &wstatus, 0);
 			}
 			else {
@@ -222,6 +229,7 @@ int main(unused int argc, unused char *argv[]) {
 		}
 		else if (stat(tokens_get_token(tokens, 0), &stat_buf) != -1) {
 			if ((pid = fork())) {
+				signal(SIGINT, kill_fg_process);
 				waitpid(pid, &wstatus, 0);
 			}
 			else {
