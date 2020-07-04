@@ -29,12 +29,15 @@ struct termios shell_tmodes;
 /* Process group id for the shell */
 pid_t shell_pgid;
 
-pid_t pid;
+pid_t fg_pid;
+pid_t bg_pids[4096];
+size_t bg_idx = 0;
 
 int cmd_exit(struct tokens *tokens);
 int cmd_help(struct tokens *tokens);
 int cmd_pwd(struct tokens *tokens);
 int cmd_cd(struct tokens *tokens);
+int cmd_wait(struct tokens *tokens);
 
 /* Built-in command functions take token array (see parse.h) and return int */
 typedef int cmd_fun_t(struct tokens *tokens);
@@ -50,7 +53,8 @@ fun_desc_t cmd_table[] = {
 	{cmd_help, "?", "show this help menu"},
 	{cmd_exit, "exit", "exit the command shell"},
 	{cmd_pwd, "pwd", "print working directory"},
-	{cmd_cd, "cd", "change working directory"}
+	{cmd_cd, "cd", "change working directory"},
+	{cmd_wait, "wait", "wait for background jobs to finish"}
 };
 
 /* Prints a helpful description for the given command */
@@ -88,6 +92,15 @@ int cmd_cd(struct tokens *tokens) {
 			return 0;
 		perror("cd");
 	}
+	return 0;
+}
+
+int cmd_wait(struct tokens *tokens) {
+	int wstatus;
+	for (size_t i = 0; i < bg_idx; i++) {
+		waitpid(bg_pids[i], &wstatus, 0);
+	}
+	bg_idx = 0;
 	return 0;
 }
 
@@ -191,7 +204,7 @@ void execute(char *fullpath, struct tokens *tokens, size_t start_index, size_t e
 
 void kill_fg_process(int sig) {
 	signal(SIGINT, kill_fg_process);
-	kill(pid, sig);
+	kill(fg_pid, sig);
 }
 
 int main(unused int argc, unused char *argv[]) {
@@ -218,19 +231,29 @@ int main(unused int argc, unused char *argv[]) {
 		}
 		else if (tokens_get_length(tokens) == 0);
 		else if ((pathname = search_path(tokens_get_token(tokens, 0)))) {
-			if ((pid = fork())) {
+			if (!strcmp(tokens_get_token(tokens, tokens_get_length(tokens) - 1), "&")) {
+				if ((bg_pids[bg_idx++] = fork()))
+					free(pathname);
+				else
+					execute(pathname, tokens, 0, tokens_get_length(tokens) - 1);
+			}
+			else if ((fg_pid = fork())) {
 				free(pathname);
 				signal(SIGINT, kill_fg_process);
-				waitpid(pid, &wstatus, 0);
+				waitpid(fg_pid, &wstatus, 0);
 			}
 			else {
 				execute(pathname, tokens, 0, tokens_get_length(tokens));
 			}
 		}
 		else if (stat(tokens_get_token(tokens, 0), &stat_buf) != -1) {
-			if ((pid = fork())) {
+			if (!strcmp(tokens_get_token(tokens, tokens_get_length(tokens) - 1), "&")) {
+				if (!(bg_pids[bg_idx++] = fork()))
+					execute(tokens_get_token(tokens, 0), tokens, 0, tokens_get_length(tokens) - 1);
+			}
+			else if ((fg_pid = fork())) {
 				signal(SIGINT, kill_fg_process);
-				waitpid(pid, &wstatus, 0);
+				waitpid(fg_pid, &wstatus, 0);
 			}
 			else {
 				execute(tokens_get_token(tokens, 0), tokens, 0, tokens_get_length(tokens));
