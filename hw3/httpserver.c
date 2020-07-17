@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <unistd.h>
+#include <libgen.h>
 
 #include "libhttp.h"
 #include "wq.h"
@@ -33,6 +34,38 @@ char *server_files_directory;
 char *server_proxy_hostname;
 int server_proxy_port;
 
+void free_request(struct http_request *request) {
+	free(request->method);
+	free(request->path);
+	free(request);
+}
+
+ssize_t good_write(int fd, const void *buf, size_t count) {
+	ssize_t bytes_written = 0, bytes = 0;
+	while (bytes_written < count) {
+		bytes = write(fd, buf + bytes_written, count - bytes_written);
+		if (bytes < 0) {
+			perror("write");
+			exit(errno);
+		}
+		bytes_written += bytes;
+	}
+	return bytes_written;
+}
+
+ssize_t good_read(int fd, void *buf, size_t count) {
+	ssize_t bytes_read = 0, bytes = 0;
+	while (bytes_read < count) {
+		bytes = read(fd, buf + bytes_read, count - bytes_read);
+		if (bytes < 0) {
+			perror("write");
+			exit(errno);
+		}
+		bytes_read += bytes;
+	}
+	return bytes_read;
+}
+
 /*
  * Serves the contents the file stored at `path` to the client socket `fd`.
  * It is the caller's reponsibility to ensure that the file stored at `path` exists.
@@ -42,11 +75,33 @@ void serve_file(int fd, char *path) {
 	/* TODO: PART 2 */
 	/* PART 2 BEGIN */
 
+	int file;
+	struct stat file_stat;
+	char file_size_buffer[32];
+	void *file_buffer;
+
 	http_start_response(fd, 200);
 	http_send_header(fd, "Content-Type", http_get_mime_type(path));
-	http_send_header(fd, "Content-Length", "0"); // TODO: change this line too
+	stat(path, &file_stat);
+	snprintf(file_size_buffer, 32, "%ld", file_stat.st_size);
+	http_send_header(fd, "Content-Length", file_size_buffer);
 	http_end_headers(fd);
 
+	file_buffer = malloc(file_stat.st_size);
+	if (file_buffer == NULL) {
+		perror("malloc");
+		exit(errno);
+	}
+	file = open(path, O_RDONLY);
+	if (file == -1) {
+		perror("open");
+		free(file_buffer);
+		exit(errno);
+	}
+	good_read(file, file_buffer, file_stat.st_size);
+	good_write(fd, file_buffer, file_stat.st_size);
+	free(file_buffer);
+	close(file);
 
 	/* PART 2 END */
 }
@@ -60,12 +115,28 @@ void serve_directory(int fd, char *path) {
 	/* PART 3 BEGIN */
 
 	// TODO: Open the directory (Hint: opendir() may be useful here)
+	DIR *dir = opendir(path);
 
 	/**
 	 * TODO: For each entry in the directory (Hint: look at the usage of readdir() ),
 	 * send a string containing a properly formatted HTML. (Hint: the http_format_href()
 	 * function in libhttp.c may be useful here)
 	 */
+	struct dirent *entry;
+	char *entry_buffer = malloc(1024);
+	char *dir_path_copy = strcpy(malloc(strlen(path)), path);
+	char *parent_dir = dirname(dir_path_copy);
+	snprintf(entry_buffer, 1024, "<a href=\"/%s\">..</a><br/>", parent_dir);
+	good_write(fd, entry_buffer, strlen(entry_buffer));
+	free(dir_path_copy);
+	for (entry = readdir(dir); entry != NULL; entry = readdir(dir)) {
+		if (entry->d_name[0] != '.') {
+			http_format_href(entry_buffer, path, entry->d_name);
+			good_write(fd, entry_buffer, strlen(entry_buffer) + 1);
+		}
+	}
+	free(entry_buffer);
+	closedir(dir);
 
 	/* PART 3 END */
 }
@@ -93,6 +164,8 @@ void handle_files_request(int fd) {
 		http_send_header(fd, "Content-Type", "text/html");
 		http_end_headers(fd);
 		close(fd);
+		if (request != NULL)
+			free_request(request);
 		return;
 	}
 
@@ -101,6 +174,7 @@ void handle_files_request(int fd) {
 		http_send_header(fd, "Content-Type", "text/html");
 		http_end_headers(fd);
 		close(fd);
+		free_request(request);
 		return;
 	}
 
@@ -121,10 +195,31 @@ void handle_files_request(int fd) {
 	 */
 
 	/* PART 2 & 3 BEGIN */
+	struct stat file_stat;
+	int error = stat(path, &file_stat);
+	if (error == -1) {
+		http_start_response(fd, 404);
+		http_send_header(fd, "Content-Type", "text/html");
+		http_send_header(fd, "Content-Length", "0");
+		http_end_headers(fd);
+	}
+	else if (S_ISREG(file_stat.st_mode)) {
+		serve_file(fd, path);
+	}
+	else if (S_ISDIR(file_stat.st_mode)) {
+		char *index_path = malloc(strlen(path) + 10);
+		http_format_index(index_path, path);
+		if (stat(index_path, &file_stat) == 0 && S_ISREG(file_stat.st_mode))
+			serve_file(fd, index_path);
+		else
+			serve_directory(fd, path);
+		free(index_path);
+	}
 
 	/* PART 2 & 3 END */
-
+	free(path);
 	close(fd);
+	free_request(request);
 	return;
 }
 
