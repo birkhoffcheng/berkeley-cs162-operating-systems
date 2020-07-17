@@ -15,11 +15,13 @@
 #include <unistd.h>
 #include <unistd.h>
 #include <libgen.h>
+#include <stdbool.h>
 
 #include "libhttp.h"
 #include "wq.h"
 
 #define BACKLOG 1024
+#define PROXY_BUFFER_SIZE 65536
 
 /*
  * Global configuration variables.
@@ -33,6 +35,7 @@ int server_port;	// Default value: 8000
 char *server_files_directory;
 char *server_proxy_hostname;
 int server_proxy_port;
+bool proxy_running;
 
 void free_request(struct http_request *request) {
 	free(request->method);
@@ -223,6 +226,24 @@ void handle_files_request(int fd) {
 	return;
 }
 
+void *proxy_client_to_target(void *arg) {
+	int client_fd = (unsigned long)arg & 0xFFFFFFFF;
+	int target_fd = (unsigned long)arg >> 32;
+	void *buffer = malloc(PROXY_BUFFER_SIZE);
+	ssize_t bytes_read = 1;
+	while (proxy_running && bytes_read > 0) {
+		bytes_read = read(client_fd, buffer, PROXY_BUFFER_SIZE);
+		if (bytes_read == -1) {
+			proxy_running = false;
+		}
+		if (write(target_fd, buffer, bytes_read) == -1) {
+			proxy_running = false;
+		}
+	}
+	free(buffer);
+	return NULL;
+}
+
 /*
  * Opens a connection to the proxy target (hostname=server_proxy_hostname and
  * port=server_proxy_port) and relays traffic to/from the stream fd and the
@@ -287,7 +308,25 @@ void handle_proxy_request(int fd) {
 
 	/* TODO: PART 4 */
 	/* PART 4 BEGIN */
-
+	unsigned long arg = ((unsigned long)target_fd << 32) | fd;
+	pthread_t tid;
+	proxy_running = true;
+	pthread_create(&tid, NULL, proxy_client_to_target, (void *)arg);
+	void *buffer = malloc(PROXY_BUFFER_SIZE);
+	ssize_t bytes_read = 1;
+	while (proxy_running && bytes_read > 0) {
+		bytes_read = read(target_fd, buffer, PROXY_BUFFER_SIZE);
+		if (bytes_read == -1) {
+			proxy_running = false;
+		}
+		if (write(fd, buffer, bytes_read) == -1) {
+			proxy_running = false;
+		}
+	}
+	pthread_join(tid, NULL);
+	close(fd);
+	close(target_fd);
+	free(buffer);
 	/* PART 4 END */
 
 }
