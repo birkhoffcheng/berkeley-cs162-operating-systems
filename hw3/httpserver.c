@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <unistd.h>
 #include <libgen.h>
@@ -413,17 +414,6 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
 		exit(errno);
 	}
 
-	int conn_fd;
-	while (1) {
-		conn_fd = accept(*socket_number, (struct sockaddr *)&client_address, (socklen_t *)&client_address_length);
-		if (conn_fd == -1) {
-			perror("accept");
-			exit(errno);
-		}
-		request_handler(conn_fd);
-		close(conn_fd);
-	}
-
 	/* PART 1 END */
 	printf("Listening on port %d...\n", server_port);
 
@@ -436,17 +426,13 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
 #endif
 
 	while (1) {
-		client_socket_number = accept(*socket_number,
-				(struct sockaddr *) &client_address,
-				(socklen_t *) &client_address_length);
+		client_socket_number = accept(*socket_number, (struct sockaddr *) &client_address, (socklen_t *) &client_address_length);
 		if (client_socket_number < 0) {
 			perror("Error accepting socket");
 			continue;
 		}
 
-		printf("Accepted connection from %s on port %d\n",
-				inet_ntoa(client_address.sin_addr),
-				client_address.sin_port);
+		printf("Accepted connection from %s on port %d\n", inet_ntoa(client_address.sin_addr), client_address.sin_port);
 
 #ifdef BASICSERVER
 		/*
@@ -472,7 +458,14 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
 		 */
 
 		/* PART 5 BEGIN */
-
+		if (fork()) {
+			close(client_socket_number);
+		}
+		else {
+			close(*socket_number);
+			request_handler(client_socket_number);
+			exit(EXIT_SUCCESS);
+		}
 		/* PART 5 END */
 
 #elif THREADSERVER
@@ -516,6 +509,14 @@ void signal_callback_handler(int signum) {
 	exit(0);
 }
 
+#ifdef FORKSERVER
+void collect_zombies(int signum) {
+	int ws;
+	pid_t pid = wait(&ws);
+	printf("Child %d exited with status %d\n", pid, WEXITSTATUS(ws));
+}
+#endif
+
 char *USAGE =
 	"Usage: ./httpserver --files some_directory/ [--port 8000 --num-threads 5]\n"
 	"			 ./httpserver --proxy inst.eecs.berkeley.edu:80 [--port 8000 --num-threads 5]\n";
@@ -527,7 +528,11 @@ void exit_with_usage() {
 
 int main(int argc, char **argv) {
 	signal(SIGINT, signal_callback_handler);
+	signal(SIGTERM, signal_callback_handler);
 	signal(SIGPIPE, SIG_IGN);
+#ifdef FORKSERVER
+	signal(SIGCHLD, collect_zombies);
+#endif
 
 	/* Default settings */
 	server_port = 8000;
