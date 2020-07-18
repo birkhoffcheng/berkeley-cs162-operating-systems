@@ -236,6 +236,7 @@ void *proxy_client_to_target(void *arg) {
 		bytes_read = read(client_fd, buffer, PROXY_BUFFER_SIZE);
 		if (bytes_read == -1) {
 			proxy_running = false;
+			break;
 		}
 		if (write(target_fd, buffer, bytes_read) == -1) {
 			proxy_running = false;
@@ -319,6 +320,7 @@ void handle_proxy_request(int fd) {
 		bytes_read = read(target_fd, buffer, PROXY_BUFFER_SIZE);
 		if (bytes_read == -1) {
 			proxy_running = false;
+			break;
 		}
 		if (write(fd, buffer, bytes_read) == -1) {
 			proxy_running = false;
@@ -347,7 +349,13 @@ void *handle_clients(void *void_request_handler) {
 
 	/* TODO: PART 7 */
 	/* PART 7 BEGIN */
-
+	int fd;
+	while (1) {
+		if ((fd = wq_pop(&work_queue)) == -1)
+			continue;
+		request_handler(fd);
+	}
+	return NULL;
 	/* PART 7 END */
 }
 
@@ -355,10 +363,13 @@ void *handle_clients(void *void_request_handler) {
  * Creates `num_threads` amount of threads. Initializes the work queue.
  */
 void init_thread_pool(int num_threads, void (*request_handler)(int)) {
-
 	/* TODO: PART 7 */
 	/* PART 7 BEGIN */
-
+	wq_init(&work_queue);
+	int i;
+	pthread_t tid;
+	for (i = 0; i < num_threads; i++)
+		pthread_create(&tid, NULL, handle_clients, request_handler);
 	/* PART 7 END */
 }
 #endif
@@ -373,6 +384,9 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
 	struct sockaddr_in server_address, client_address;
 	size_t client_address_length = sizeof(client_address);
 	int client_socket_number;
+#ifdef THREADSERVER
+	pthread_t tid;
+#endif
 
 	// Creates a socket for IPv4 and TCP.
 	*socket_number = socket(PF_INET, SOCK_STREAM, 0);
@@ -480,7 +494,8 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
 		 */
 
 		/* PART 6 BEGIN */
-
+		pthread_create(&tid, NULL, (void *(*)(void *))request_handler, (void *)(long)client_socket_number);
+		pthread_detach(tid);
 		/* PART 6 END */
 #elif POOLSERVER
 		/*
@@ -492,7 +507,7 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
 		 */
 
 		/* PART 7 BEGIN */
-
+		wq_push(&work_queue, client_socket_number);
 		/* PART 7 END */
 #endif
 	}
