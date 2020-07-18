@@ -368,7 +368,7 @@ void init_thread_pool(int num_threads, void (*request_handler)(int)) {
 	wq_init(&work_queue);
 	int i;
 	pthread_t tid;
-	for (i = 0; i < num_threads; i++)
+	for (i = 0; i <= num_threads; i++)
 		pthread_create(&tid, NULL, handle_clients, request_handler);
 	/* PART 7 END */
 }
