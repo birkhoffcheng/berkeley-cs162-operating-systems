@@ -99,6 +99,8 @@ struct thread
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
     uint8_t *stack_page;                /* Pointer to the lowest mapped stack page */
+    void *heap;
+    void *brk;
     struct file* open_file;             /* Single open file supported. */
     bool in_syscall;                    /* Stores if we are in a syscall. */
 #endif

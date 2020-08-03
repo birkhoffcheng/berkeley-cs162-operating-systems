@@ -219,6 +219,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   off_t file_ofs;
   bool success = false;
   int i;
+  uint32_t mem_end = 0;
 
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
@@ -299,6 +300,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
               if (!load_segment (file, file_page, (void *) mem_page,
                                  read_bytes, zero_bytes, writable))
                 goto done;
+              mem_end = mem_page + read_bytes + zero_bytes;
             }
           else
             goto done;
@@ -312,7 +314,9 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
-
+  mem_end = ROUND_UP(mem_end, PGSIZE);
+  t->heap = (void *)mem_end;
+  t->brk = (void *)mem_end;
   success = true;
 
  done:
