@@ -110,13 +110,14 @@ static void *syscall_sbrk(intptr_t increment) {
 		num_pages = (pg_round_up(start + increment) - pg_round_up(start)) / PGSIZE;
 		if (num_pages > 0 && !(paddr = palloc_get_multiple(PAL_ZERO | PAL_USER, num_pages)))
 			return (void *)-1;
+		start = pg_round_up(start);
 		for (i = 0; i < num_pages; i++)
 			if (!pagedir_set_page(t->pagedir, start + i * PGSIZE, paddr + i * PGSIZE, true))
 				return (void *)-1;
 	}
 	else if (increment < 0) {
 		if (start + increment < t->heap)
-			return (void *)-1;
+			increment = start - t->heap;
 		num_pages = (pg_round_up(start) - pg_round_up(start + increment)) / PGSIZE;
 		start = pg_round_up(start + increment);
 		for (i = 0; i < num_pages; i++) {
@@ -124,8 +125,8 @@ static void *syscall_sbrk(intptr_t increment) {
 			pagedir_clear_page(t->pagedir, start + i * PGSIZE);
 			palloc_free_page(paddr);
 		}
-		start = t->brk;
 	}
+	start = t->brk;
 	t->brk += increment;
 	return start;
 }
