@@ -81,9 +81,8 @@ void free(void* ptr) {
 		mem = mem->prev;
 	}
 	if (mem->next && mem->next->free) {
-		mem->next->size += sizeof(struct mem_block) + mem->size;
-		remove_entry(mem);
-		mem = mem->next;
+		mem->size += sizeof(struct mem_block) + mem->next->size;
+		remove_entry(mem->next);
 	}
 }
 
